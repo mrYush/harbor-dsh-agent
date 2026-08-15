@@ -1,0 +1,29 @@
+# secrets
+.env
+.env.*
+
+# runtime data
+jobs/
+*.log
+.harbor-home/
+.xdg-*/
+__pycache__/
+*.pyc
+
+# python packaging
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# local task datasets & retry dirs
+tasks/
+retry-timeout/
+tb2-mock/sessions/
+tb2-mock/captured.jsonl
+tb2-mock/home/
+
+# editors
+.vscode/
+.idea/
