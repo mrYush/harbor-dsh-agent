@@ -295,8 +295,13 @@ class DshAgent(BaseInstalledAgent):
                 .get("reasoningEffort")
             )
 
-        # Per-(turn, step) usage: cacheReadTokens is a session-cumulative value,
-        # so a step's own cache hits are the delta vs the previous step.
+        # Per-(turn, step) usage. DeepSeek streaming usage reports:
+        #   inputTokens      = this request's cache-miss tokens (new content)
+        #   cacheReadTokens  = this request's cache-hit tokens (history prefix,
+        #                      grows with the conversation — NOT a session
+        #                      cumulative value)
+        #   outputTokens     = completion tokens (includes reasoning tokens)
+        # So a step's total prompt = inputTokens + cacheReadTokens.
         step_usage: dict[tuple[int, int], dict] = {}
         for ev in events:
             if ev.get("type") != "assistant/chunk":
@@ -308,18 +313,13 @@ class DshAgent(BaseInstalledAgent):
             usage = chunk.get("usage")
             if isinstance(usage, dict):
                 step_usage[(data.get("turn"), data.get("step"))] = usage
-        prev_cached: dict[int, int] = {}
         step_metrics: dict[tuple[int, int], Metrics] = {}
-        for key in sorted(step_usage, key=lambda k: (k[0], k[1])):
-            u = step_usage[key]
-            turn, _ = key
-            cached_now = u.get("cacheReadTokens", 0) or 0
-            cached_delta = cached_now - prev_cached.get(turn, 0)
-            prev_cached[turn] = cached_now
+        for key, u in step_usage.items():
             step_metrics[key] = Metrics(
-                prompt_tokens=((u.get("inputTokens", 0) or 0) + cached_delta),
+                prompt_tokens=((u.get("inputTokens", 0) or 0)
+                               + (u.get("cacheReadTokens", 0) or 0)),
                 completion_tokens=u.get("outputTokens", 0) or 0,
-                cached_tokens=cached_delta,
+                cached_tokens=u.get("cacheReadTokens", 0) or 0,
             )
 
         steps: list[Step] = []
@@ -383,12 +383,7 @@ class DshAgent(BaseInstalledAgent):
         if not steps:
             return None
 
-        input_tokens = output_tokens = 0
-        # DeepSeek 流式 chunk 的 cacheReadTokens 是会话累计值（单调递增，
-        # 实测从 1.4k 涨到 34k），逐块累加会虚高一个数量级。取最后一条
-        # （= 整个会话的缓存命中累计）；inputTokens/outputTokens 则是
-        # 单步值，逐块累加正确。
-        cached_tokens: int | None = None
+        input_tokens = output_tokens = cached_tokens = 0
         for ev in events:
             if ev.get("type") != "assistant/chunk":
                 continue
@@ -396,16 +391,16 @@ class DshAgent(BaseInstalledAgent):
             if isinstance(usage, dict):
                 input_tokens += usage.get("inputTokens", 0) or 0
                 output_tokens += usage.get("outputTokens", 0) or 0
-                cached_tokens = usage.get("cacheReadTokens", 0) or 0
+                cached_tokens += usage.get("cacheReadTokens", 0) or 0
 
         return Trajectory(
             session_id=session_id,
             agent=TrajAgent(name="dsh", version="0.1.0rc6", model_name=model),
             steps=steps,
             final_metrics=FinalMetrics(
-                # inputTokens 是缓存未命中部分（实测 Σ=19k < 累计 cacheRead 34k），
-                # ATIF 的 total_prompt_tokens 含 cached：miss + hit。
-                total_prompt_tokens=(input_tokens + (cached_tokens or 0)) or None,
+                # ATIF: prompt tokens "including cached" — per-step totals
+                # (miss + hit) summed across the run.
+                total_prompt_tokens=(input_tokens + cached_tokens) or None,
                 total_completion_tokens=output_tokens or None,
                 total_cached_tokens=cached_tokens or None,
                 total_steps=len(steps),
