@@ -23,6 +23,7 @@ from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 from harbor.models.trajectories.agent import Agent as TrajAgent
 from harbor.models.trajectories.final_metrics import FinalMetrics
+from harbor.models.trajectories.metrics import Metrics
 from harbor.models.trajectories.observation_result import ObservationResult
 from harbor.models.trajectories.step import Observation, Step, ToolCall
 from harbor.models.trajectories.trajectory import Trajectory
@@ -294,6 +295,33 @@ class DshAgent(BaseInstalledAgent):
                 .get("reasoningEffort")
             )
 
+        # Per-(turn, step) usage: cacheReadTokens is a session-cumulative value,
+        # so a step's own cache hits are the delta vs the previous step.
+        step_usage: dict[tuple[int, int], dict] = {}
+        for ev in events:
+            if ev.get("type") != "assistant/chunk":
+                continue
+            data = ev.get("data", {})
+            chunk = data.get("chunk", {})
+            if not (isinstance(chunk, dict) and chunk.get("type") == "usage"):
+                continue
+            usage = chunk.get("usage")
+            if isinstance(usage, dict):
+                step_usage[(data.get("turn"), data.get("step"))] = usage
+        prev_cached: dict[int, int] = {}
+        step_metrics: dict[tuple[int, int], Metrics] = {}
+        for key in sorted(step_usage, key=lambda k: (k[0], k[1])):
+            u = step_usage[key]
+            turn, _ = key
+            cached_now = u.get("cacheReadTokens", 0) or 0
+            cached_delta = cached_now - prev_cached.get(turn, 0)
+            prev_cached[turn] = cached_now
+            step_metrics[key] = Metrics(
+                prompt_tokens=((u.get("inputTokens", 0) or 0) + cached_delta),
+                completion_tokens=u.get("outputTokens", 0) or 0,
+                cached_tokens=cached_delta,
+            )
+
         steps: list[Step] = []
         for ev in events:
             data = ev.get("data", {})
@@ -346,6 +374,9 @@ class DshAgent(BaseInstalledAgent):
                         reasoning_content=reasoning,
                         tool_calls=tool_calls or None,
                         observation=observation,
+                        metrics=step_metrics.get(
+                            (data.get("turn"), data.get("step"))
+                        ),
                     )
                 )
 
