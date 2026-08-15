@@ -212,6 +212,42 @@ class DshAgent(BaseInstalledAgent):
             context.metadata = {"dsh": data}
             if data.get("ok"):
                 self._export_trajectory_from_result(data)
+        # Token usage for the hub (agent_result.n_*_tokens). Harbor backfills
+        # these from AgentContext after run(); without them the hub shows
+        # "no token data". Semantics match the ATIF metrics (and computer_1):
+        # prompt = miss + cache-hit per request, cache tracked separately.
+        self._fill_token_usage(context)
+
+    def _fill_token_usage(self, context: AgentContext) -> None:
+        sessions_dir = self.logs_dir / "sessions"
+        if not sessions_dir.is_dir():
+            return
+        jsonls = sorted(
+            sessions_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime
+        )
+        if not jsonls:
+            return
+        n_input = n_output = n_cache = 0
+        for line in jsonls[-1].read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines():
+            if not line.strip():
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if ev.get("type") != "assistant/chunk":
+                continue
+            usage = ev.get("data", {}).get("chunk", {}).get("usage")
+            if isinstance(usage, dict):
+                n_input += usage.get("inputTokens", 0) or 0
+                n_output += usage.get("outputTokens", 0) or 0
+                n_cache += usage.get("cacheReadTokens", 0) or 0
+        if n_input or n_output:
+            context.n_input_tokens = n_input + n_cache
+            context.n_cache_tokens = n_cache
+            context.n_output_tokens = n_output
 
     def _export_trajectory_from_result(self, data: dict) -> None:
         """Export ATIF trajectory from a completed run's result file."""
