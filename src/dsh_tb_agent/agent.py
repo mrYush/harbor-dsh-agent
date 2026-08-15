@@ -352,7 +352,12 @@ class DshAgent(BaseInstalledAgent):
         if not steps:
             return None
 
-        input_tokens = output_tokens = cached_tokens = 0
+        input_tokens = output_tokens = 0
+        # DeepSeek 流式 chunk 的 cacheReadTokens 是会话累计值（单调递增，
+        # 实测从 1.4k 涨到 34k），逐块累加会虚高一个数量级。取最后一条
+        # （= 整个会话的缓存命中累计）；inputTokens/outputTokens 则是
+        # 单步值，逐块累加正确。
+        cached_tokens: int | None = None
         for ev in events:
             if ev.get("type") != "assistant/chunk":
                 continue
@@ -360,14 +365,16 @@ class DshAgent(BaseInstalledAgent):
             if isinstance(usage, dict):
                 input_tokens += usage.get("inputTokens", 0) or 0
                 output_tokens += usage.get("outputTokens", 0) or 0
-                cached_tokens += usage.get("cacheReadTokens", 0) or 0
+                cached_tokens = usage.get("cacheReadTokens", 0) or 0
 
         return Trajectory(
             session_id=session_id,
             agent=TrajAgent(name="dsh", version="0.1.0rc6", model_name=model),
             steps=steps,
             final_metrics=FinalMetrics(
-                total_prompt_tokens=input_tokens or None,
+                # inputTokens 是缓存未命中部分（实测 Σ=19k < 累计 cacheRead 34k），
+                # ATIF 的 total_prompt_tokens 含 cached：miss + hit。
+                total_prompt_tokens=(input_tokens + (cached_tokens or 0)) or None,
                 total_completion_tokens=output_tokens or None,
                 total_cached_tokens=cached_tokens or None,
                 total_steps=len(steps),
