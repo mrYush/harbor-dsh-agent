@@ -83,6 +83,8 @@ exactly what you want when max-effort reasoning hits the official time limit.
   `JOB_OVERRIDE=jobs/<ts>` pins a specific job; `DSH_RUN_ROOT` / `DSH_TASKS_DIR` configure paths.
 - `tools/mock-llm.py` — DeepSeek-compatible mock API that captures the exact request
   structure (messages/tools/reasoning_effort) — point `DEEPSEEK_BASE_URL` at it.
+- `tools/rebuild-trajectories.py` — rebuild `trajectory.json` for an existing job
+  from its session JSONL (use after upgrading the token-metrics logic; backs up originals as `.bak`).
 - `scripts/collect-timeouts.sh` — collect agent-timeout trials (reward 0) into a retry
   directory with relaxed `[agent].timeout_sec` (see docs).
 - `scripts/deploy-overseas.sh` — one-shot overseas runner (Daytona / bare VPS).
