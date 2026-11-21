@@ -30,6 +30,18 @@ answer. The test checks both authenticated requests, container-side SDK and
 runtime versions, the native DSH response, the Harbor trajectory, the verifier
 reward, and the absence of the test key in saved artifacts.
 
+If downloading the SDK exceeds the Harbor setup deadline, prepare the fixture's
+wheel directory once and pass it to subsequent runs. The test mounts it read-only
+and configures the container's pip to install from local files.
+
+```sh
+python3 -m pip download --only-binary=:all: --platform manylinux_2_28_x86_64 \
+  --platform manylinux2014_x86_64 --implementation cp --python-version 3.12 \
+  --abi cp312 --dest /tmp/dsh-smoke-wheels deepseek-harness-sdk==0.1.0rc6
+DOCKER_DEFAULT_PLATFORM=linux/amd64 .venv/bin/python tests/smoke.py \
+  jobs/dsh-cached --wheelhouse /tmp/dsh-smoke-wheels
+```
+
 ## Architecture
 
 ```

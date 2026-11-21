@@ -81,7 +81,29 @@ def main():
     parser.add_argument(
         "--host", default="host.docker.internal", help="Mock host as seen by the task"
     )
+    parser.add_argument(
+        "--wheelhouse",
+        type=Path,
+        help="Install the SDK from a directory of Linux amd64 Python 3.12 wheels",
+    )
     args = parser.parse_args()
+    install_args = []
+    if args.wheelhouse:
+        if not args.wheelhouse.is_dir():
+            parser.error(f"Missing wheel directory: {args.wheelhouse}")
+        mounts = [
+            {
+                "type": "bind",
+                "source": str(source.resolve()),
+                "target": target,
+                "read_only": True,
+            }
+            for source, target in (
+                (args.wheelhouse, "/opt/dsh-smoke-wheels"),
+                (Path(__file__).with_name("pip-offline.conf"), "/etc/pip.conf"),
+            )
+        ]
+        install_args = ["--mounts", json.dumps(mounts)]
     job = args.job.resolve()
     if job.exists():
         parser.error(f"Job directory already exists: {job}")
@@ -120,6 +142,7 @@ def main():
                     str(job.parent),
                     "--job-name",
                     job.name,
+                    *install_args,
                 ],
                 env=env,
                 check=True,
