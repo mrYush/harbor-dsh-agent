@@ -9,6 +9,27 @@ This repository contains a Harbor *installed agent* that:
 3. Uploads a minimal dsh agent composition (`minimal.cordis.yml`): persistent bash + string-replace editor tools, DeepSeek LLM adapter, no harness identity / skills / workspace context,
 4. Runs the task instruction through dsh and exports an **ATIF trajectory** back to Harbor (`trajectory.json`), even when the agent is killed by the official time limit.
 
+## Reproduce the Harbor 0.25.0 compatibility test
+
+From this checkout, use Python 3.12 or newer, Docker with Compose, and a Linux
+amd64 container runtime. The first run downloads the fixture image and Python
+packages. The test starts its own local DeepSeek-compatible HTTP server and
+generates a disposable test credential.
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+DOCKER_DEFAULT_PLATFORM=linux/amd64 .venv/bin/python tests/smoke.py jobs/dsh-smoke
+```
+
+Choose a fresh job directory for each run. The defaults work with Docker Desktop.
+On native Linux, pass `--bind BRIDGE_IP --host BRIDGE_IP`, using a host-side
+Docker bridge address reachable from the container. The mock asks DSH to use its
+shell tool to write a marker. After it receives the tool output, it returns a final
+answer. The test checks both authenticated requests, container-side SDK and
+runtime versions, the native DSH response, the Harbor trajectory, the verifier
+reward, and the absence of the test key in saved artifacts.
+
 ## Architecture
 
 ```
@@ -97,10 +118,10 @@ exactly what you want when max-effort reasoning hits the official time limit.
 
 ## Requirements
 
-- Harbor `>= 0.21.0` (`pip install harbor`)
-- Python `>= 3.10` (adapter runs in the Harbor control plane)
-- A DeepSeek API key
-- The TB 2.1 dataset (`harbor dataset download terminal-bench-2.1` or any task directory)
+- Harbor `== 0.25.0` (installed with the adapter)
+- Python `>= 3.12` on the Harbor host and Python `>= 3.10` in the task container
+- A DeepSeek API key for real inference
+- For benchmark runs, the TB 2.1 dataset (`harbor dataset download terminal-bench-2.1` or any task directory)
 
 ## License
 

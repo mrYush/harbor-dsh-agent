@@ -15,12 +15,15 @@ import shlex
 import tempfile
 import uuid
 from pathlib import Path, PurePosixPath
-from typing import override
+from typing import Literal, override
 
+from harbor.agents.agent_auth_resolution import ModelConnectionSpec, require_model_api_key
+from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.installed.base import BaseInstalledAgent
-from harbor.agents.model_connection import ModelConnectionSpec
+from harbor.agents.options import InstalledAgentOptions
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+from harbor.models.model_api_format import ModelApiFormat
 from harbor.models.trajectories.agent import Agent as TrajAgent
 from harbor.models.trajectories.final_metrics import FinalMetrics
 from harbor.models.trajectories.metrics import Metrics
@@ -29,6 +32,7 @@ from harbor.models.trajectories.step import Observation, Step, ToolCall
 from harbor.models.trajectories.trajectory import Trajectory
 from harbor.utils.trajectory_utils import format_trajectory_json
 
+SDK_VERSION = "0.1.0rc6"
 _INSTALL_DIR = PurePosixPath("/installed-agent")
 # str() everywhere: some harbor environments (e.g. daytona) pass the target
 # path straight to their SDK, which requires plain str (aiohttp rejects
@@ -40,17 +44,36 @@ _RESULT_REMOTE_PATH = PurePosixPath("/logs/agent/dsh-result.json")
 _RESULT_LOCAL_NAME = "dsh-result.json"
 
 
+class DshOptions(InstalledAgentOptions):
+    """Harbor installation options for the pinned DSH runtime."""
+
+    version: Literal["0.1.0rc6"] | None = None
+
+
 class DshAgent(BaseInstalledAgent):
     """Run DeepSeek Harness as an installed agent inside the task container."""
 
-    MODEL_CONNECTION = ModelConnectionSpec(default_provider="deepseek")
+    options_model = DshOptions
+    capabilities = AgentCapabilities(base_url=True, atif=True)
+    MODEL_CONNECTION = ModelConnectionSpec(
+        default_provider="deepseek",
+        supported_api_formats=[ModelApiFormat.OPENAI_CHAT_COMPLETIONS],
+        default_api_format_by_provider={"deepseek": ModelApiFormat.OPENAI_CHAT_COMPLETIONS},
+        api_key_destination_names={"default": "DEEPSEEK_API_KEY"},
+        base_url_destination_names={"default": "DEEPSEEK_BASE_URL"},
+    )
+
+    @classmethod
+    @override
+    def check_model_credentials(cls, connection, *, kwargs, env, explicit_env=None):
+        require_model_api_key(connection, cls.name())
 
     @staticmethod
     def name() -> str:
         return "dsh"
 
     def version(self) -> str | None:
-        return None
+        return SDK_VERSION
 
     @override
     async def install(self, environment: BaseEnvironment) -> None:
@@ -121,13 +144,13 @@ class DshAgent(BaseInstalledAgent):
             await self.exec_as_root(
                 environment,
                 "python3 -m pip install --break-system-packages --ignore-installed "
-                f"--quiet deepseek-harness-sdk{index_arg}",
+                f"--quiet deepseek-harness-sdk=={SDK_VERSION}{index_arg}",
                 timeout_sec=600,
             )
         except Exception:
             await self.exec_as_root(
                 environment,
-                f"python3 -m pip install --quiet deepseek-harness-sdk{index_arg}",
+                f"python3 -m pip install --quiet deepseek-harness-sdk=={SDK_VERSION}{index_arg}",
                 timeout_sec=600,
             )
 
@@ -159,7 +182,7 @@ class DshAgent(BaseInstalledAgent):
         api_key = access.api_key or os.environ.get("DEEPSEEK_API_KEY", "")
         if api_key:
             env["DEEPSEEK_API_KEY"] = api_key
-        base_url = access.configured_base_url or os.environ.get(
+        base_url = access.execution_base_url or os.environ.get(
             "DEEPSEEK_BASE_URL", ""
         )
         if base_url:
@@ -431,7 +454,7 @@ class DshAgent(BaseInstalledAgent):
 
         return Trajectory(
             session_id=session_id,
-            agent=TrajAgent(name="dsh", version="0.1.0rc6", model_name=model),
+            agent=TrajAgent(name="dsh", version=SDK_VERSION, model_name=model),
             steps=steps,
             final_metrics=FinalMetrics(
                 # ATIF: prompt tokens "including cached" — per-step totals

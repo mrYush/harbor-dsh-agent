@@ -15,6 +15,7 @@ import shutil
 import sys
 import threading
 import time
+from importlib.metadata import version
 from pathlib import Path
 
 
@@ -72,8 +73,10 @@ def main() -> int:
         ) as harness:
             result = harness.run(instruction, session_id=session_id)
         payload = {
-            "ok": True,
+            "ok": result.finish_reason != "error",
             "session_id": result.session_id,
+            "sdk_version": version("deepseek-harness-sdk"),
+            "runtime_version": version("deepseek-harness-runtime-bin"),
             "finish_reason": result.finish_reason,
             "final_response": result.final_response,
         }
